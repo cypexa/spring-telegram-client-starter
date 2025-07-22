@@ -1,0 +1,5 @@
+**/target
+**/.idea
+**/tdlib
+**/tdlib*
+**/*.dylib
