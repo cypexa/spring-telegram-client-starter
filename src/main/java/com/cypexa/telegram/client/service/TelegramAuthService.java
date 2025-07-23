@@ -8,10 +8,11 @@ import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Mono;
+import reactor.core.publisher.MonoSink;
 
 import java.io.IOError;
 import java.io.IOException;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -100,75 +101,68 @@ public class TelegramAuthService {
         client.send(request, new AuthorizationRequestHandler());
     }
 
-    public CompletableFuture<String> sendPhoneNumber(String phoneNumber) {
-        CompletableFuture<String> future = new CompletableFuture<>();
-
-        if (authorizationState == null) {
-            future.completeExceptionally(new RuntimeException("Client not initialized"));
-            return future;
-        }
-
-        if (!(authorizationState instanceof TdApi.AuthorizationStateWaitPhoneNumber)) {
-            future.completeExceptionally(new RuntimeException("Current state is not waiting for phone number. Current state: " + authorizationState.getClass()
-                    .getSimpleName()));
-            return future;
-        }
-
-        client.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), object -> {
-            if (object instanceof TdApi.Ok) {
-                future.complete("Phone number sent successfully");
-            } else if (object instanceof TdApi.Error error) {
-                future.completeExceptionally(new RuntimeException("Error sending phone number: " + error.message));
-            } else {
-                future.completeExceptionally(new RuntimeException("Unexpected response type: " + object.getClass()
-                        .getSimpleName()));
+    public Mono<String> sendPhoneNumber(String phoneNumber) {
+        return Mono.<String>create(sink -> {
+            if (authorizationState == null) {
+                sink.error(new RuntimeException("Client not initialized"));
+                return;
             }
-        });
 
-        return future;
+            if (!(authorizationState instanceof TdApi.AuthorizationStateWaitPhoneNumber)) {
+                sink.error(new RuntimeException("Current state is not waiting for phone number. Current state: " + 
+                    authorizationState.getClass().getSimpleName()));
+                return;
+            }
+
+            client.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), object -> {
+                handleResult(sink, object, "Phone number sent successfully", "Error sending phone number: ");
+            });
+        })
+        .doOnSubscribe(subscription -> log.info("Sending phone number: {}", phoneNumber))
+        .doOnSuccess(result -> log.info("Phone number sent successfully"))
+        .doOnError(error -> log.error("Error sending phone number", error));
     }
 
-    public CompletableFuture<String> sendAuthCode(String code) {
-        CompletableFuture<String> future = new CompletableFuture<>();
-
-        if (authorizationState == null) {
-            future.completeExceptionally(new RuntimeException("Client not initialized"));
-            return future;
-        }
-
-        if (!(authorizationState instanceof TdApi.AuthorizationStateWaitCode)) {
-            future.completeExceptionally(new RuntimeException("Current state is not waiting for code. Current state: " + authorizationState.getClass()
-                    .getSimpleName()));
-            return future;
-        }
-
-        client.send(new TdApi.CheckAuthenticationCode(code), new Client.ResultHandler() {
-            @Override
-            public void onResult(TdApi.Object object) {
-                if (object instanceof TdApi.Ok) {
-                    future.complete("Authentication code verified successfully");
-                } else if (object instanceof TdApi.Error error) {
-                    future.completeExceptionally(new RuntimeException("Error verifying code: " + error.message));
-                } else {
-                    future.completeExceptionally(new RuntimeException("Unexpected response type: " + object.getClass()
-                            .getSimpleName()));
-                }
+    public Mono<String> sendAuthCode(String code) {
+        return Mono.<String>create(sink -> {
+            if (authorizationState == null) {
+                sink.error(new RuntimeException("Client not initialized"));
+                return;
             }
-        });
 
-        return future;
+            if (!(authorizationState instanceof TdApi.AuthorizationStateWaitCode)) {
+                sink.error(new RuntimeException("Current state is not waiting for code. Current state: " + 
+                    authorizationState.getClass().getSimpleName()));
+                return;
+            }
+
+            client.send(new TdApi.CheckAuthenticationCode(code), object -> {
+                handleResult(sink, object, "Authentication code verified successfully", "Error verifying code: ");
+            });
+        })
+        .doOnSubscribe(subscription -> log.info("Verifying authentication code"))
+        .doOnSuccess(result -> log.info("Authentication code verified successfully"))
+        .doOnError(error -> log.error("Error verifying auth code", error));
+    }
+
+    private void handleResult(MonoSink<String> sink, TdApi.Object object, String successMessage, String errorPrefix) {
+        if (object instanceof TdApi.Ok) {
+            sink.success(successMessage);
+        } else if (object instanceof TdApi.Error error) {
+            sink.error(new RuntimeException(errorPrefix + error.message));
+        } else {
+            sink.error(new RuntimeException("Unexpected response type: " + object.getClass().getSimpleName()));
+        }
     }
 
     public String getCurrentAuthState() {
         if (authorizationState == null) {
             return "NOT_INITIALIZED";
         }
-
         return authorizationState.getClass().getSimpleName();
     }
 
     public boolean isAuthorized() {
         return haveAuthorization;
     }
-
 } 
