@@ -1,42 +1,20 @@
 package com.cypexa.telegram.client;
 
-import com.cypexa.telegram.client.controller.TelegramAuthController;
-import com.cypexa.telegram.client.service.TelegramAuthService;
-import lombok.extern.slf4j.Slf4j;
+import com.cypexa.telegram.client.config.TelegramClientConfiguration;
+import com.cypexa.telegram.client.properties.TelegramClientProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.annotation.Bean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 
 @Configuration
 @ConditionalOnProperty(
         prefix = "spring.telegram.client",
-        name = {
-                "api-id",
-                "api-hash"
-        }
+        name = {"api-id", "api-hash"}
 )
-@ConfigurationPropertiesScan(basePackages = "com.cypexa.telegram.client.properties")
-@ComponentScan(basePackages = {
-        "com.cypexa.telegram.client.service",
-        "com.cypexa.telegram.client.controller"
-})
-@Slf4j
+@EnableConfigurationProperties(TelegramClientProperties.class)
+@ComponentScan(basePackages = "com.cypexa.telegram.client")
+@Import(TelegramClientConfiguration.class)
 public class TelegramClientAutoConfiguration {
-    
-    @Bean
-    public TelegramAuthService telegramAuthService(
-            com.cypexa.telegram.client.properties.TelegramClientProperties properties, ApplicationContext applicationContext) {
-        log.info("Initializing TelegramAuthService with properties: apiId={}, databaseDirectory={}", 
-                properties.getApiId(), properties.getDatabaseDirectory());
-        return new TelegramAuthService(properties, applicationContext);
-    }
-    
-    @Bean
-    public TelegramAuthController telegramAuthController(TelegramAuthService authService) {
-        log.info("Initializing TelegramAuthController");
-        return new TelegramAuthController(authService);
-    }
 }

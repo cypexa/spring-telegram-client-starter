@@ -1,15 +1,24 @@
 package com.cypexa.telegram.client.controller;
 
-import com.cypexa.telegram.client.dto.*;
+import com.cypexa.telegram.client.dto.ChatListResponseDto;
+import com.cypexa.telegram.client.dto.ChatResponseDto;
+import com.cypexa.telegram.client.dto.MessageResponseDto;
+import com.cypexa.telegram.client.dto.SendMessageRequestDto;
 import com.cypexa.telegram.client.service.TelegramChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/telegram/chats")
+@RequestMapping("/api/v1/telegram/chats")
 @RequiredArgsConstructor
 @Slf4j
 public class TelegramChatController {
@@ -22,13 +31,7 @@ public class TelegramChatController {
         log.info("Received request to get chats with limit: {}", limit);
         
         return chatService.getChats(limit)
-                .map(ResponseEntity::ok)
-                .onErrorResume(ex -> {
-                    log.error("Error getting chats", ex);
-                    return Mono.just(ResponseEntity.badRequest().body(
-                            ChatListResponseDto.error(ex.getMessage())
-                    ));
-                });
+                .map(ResponseEntity::ok);
     }
 
     @GetMapping("/{chatId}")
@@ -36,15 +39,11 @@ public class TelegramChatController {
         log.info("Received request to get chat by ID: {}", chatId);
         
         return chatService.getChatById(chatId)
-                .map(ResponseEntity::ok)
-                .onErrorResume(ex -> {
-                    log.error("Error getting chat by ID: {}", chatId, ex);
-                    return Mono.just(ResponseEntity.badRequest().build());
-                });
+                .map(ResponseEntity::ok);
     }
 
-    @PostMapping("/{chatId}/messages")
-    public Mono<ResponseEntity<MessageResponseDto>> sendMessage(
+    @PostMapping("/{chatId}/message")
+    public Mono<ResponseEntity<MessageResponseDto>> sendMessageToChat(
             @PathVariable long chatId,
             @RequestBody SendMessageRequestDto request) {
         log.info("Received request to send message to chat: {}", chatId);
@@ -53,27 +52,6 @@ public class TelegramChatController {
         request.setChatId(chatId);
         
         return chatService.sendMessage(request)
-                .map(ResponseEntity::ok)
-                .onErrorResume(ex -> {
-                    log.error("Error sending message to chat: {}", chatId, ex);
-                    return Mono.just(ResponseEntity.badRequest().body(
-                            MessageResponseDto.error(ex.getMessage())
-                    ));
-                });
-    }
-
-    @PostMapping("/messages")
-    public Mono<ResponseEntity<MessageResponseDto>> sendMessageToChat(
-            @RequestBody SendMessageRequestDto request) {
-        log.info("Received request to send message to chat: {}", request.getChatId());
-        
-        return chatService.sendMessage(request)
-                .map(ResponseEntity::ok)
-                .onErrorResume(ex -> {
-                    log.error("Error sending message", ex);
-                    return Mono.just(ResponseEntity.badRequest().body(
-                            MessageResponseDto.error(ex.getMessage())
-                    ));
-                });
+                .map(ResponseEntity::ok);
     }
 } 

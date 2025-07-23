@@ -1,7 +1,11 @@
 package com.cypexa.telegram.client.service;
 
-import com.cypexa.telegram.client.dto.*;
+import com.cypexa.telegram.client.dto.MessageResponseDto;
+import com.cypexa.telegram.client.dto.SendStickerRequestDto;
+import com.cypexa.telegram.client.dto.StickerResponseDto;
+import com.cypexa.telegram.client.dto.StickerSetResponseDto;
 import lombok.extern.slf4j.Slf4j;
+import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -12,75 +16,47 @@ import java.util.List;
 
 @Service
 @Slf4j
-public class TelegramStickerService {
-
-    private final TelegramAuthService authService;
+public class TelegramStickerService extends BaseTelegramService {
     
     @Autowired
-    public TelegramStickerService(TelegramAuthService authService) {
-        this.authService = authService;
+    public TelegramStickerService(Client telegramClient, TelegramAuthService authService) {
+        super(telegramClient, authService);
     }
 
     public Mono<List<StickerSetResponseDto>> getInstalledStickerSets() {
-        return Mono.<List<StickerSetResponseDto>>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
-            // Получаем установленные наборы стикеров
+        return executeWithAuth("getInstalledStickerSets", sink -> {
             TdApi.GetInstalledStickerSets getInstalledSets = new TdApi.GetInstalledStickerSets(
                 new TdApi.StickerTypeRegular()
             );
-            
-            authService.getClient().send(getInstalledSets, result -> {
+
+            sendTelegramRequest(getInstalledSets, sink, (result, s) -> {
                 if (result instanceof TdApi.StickerSets stickerSets) {
                     List<StickerSetResponseDto> response = convertStickerSetsToDto(stickerSets);
-                    sink.success(response);
-                } else if (result instanceof TdApi.Error error) {
-                    sink.error(new RuntimeException("Error getting sticker sets: " + error.message));
+                    s.success(response);
                 } else {
-                    sink.error(new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName()));
+                    throw new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName());
                 }
             });
-        })
-        .doOnSubscribe(subscription -> log.info("Getting installed sticker sets"))
-        .doOnSuccess(result -> log.info("Successfully got {} sticker sets", result.size()))
-        .doOnError(error -> log.error("Error getting sticker sets", error));
+        });
     }
 
     public Mono<StickerSetResponseDto> getStickerSet(String name) {
-        return Mono.<StickerSetResponseDto>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
+        return executeWithAuth("getStickerSet", sink -> {
             TdApi.GetStickerSet getStickerSet = new TdApi.GetStickerSet(Long.parseLong(name));
-            
-            authService.getClient().send(getStickerSet, result -> {
+
+            sendTelegramRequest(getStickerSet, sink, (result, s) -> {
                 if (result instanceof TdApi.StickerSet stickerSet) {
                     StickerSetResponseDto response = convertStickerSetToDto(stickerSet);
-                    sink.success(response);
-                } else if (result instanceof TdApi.Error error) {
-                    sink.error(new RuntimeException("Error getting sticker set: " + error.message));
+                    s.success(response);
                 } else {
-                    sink.error(new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName()));
+                    throw new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName());
                 }
             });
-        })
-        .doOnSubscribe(subscription -> log.info("Getting sticker set: {}", name))
-        .doOnSuccess(result -> log.info("Successfully got sticker set: {}", result.getTitle()))
-        .doOnError(error -> log.error("Error getting sticker set: {}", name, error));
+        });
     }
 
     public Mono<MessageResponseDto> sendSticker(SendStickerRequestDto request) {
-        return Mono.<MessageResponseDto>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
+        return executeWithAuth("sendSticker", sink -> {
             // Создаем стикер сообщение
             TdApi.InputMessageSticker inputMessageSticker = new TdApi.InputMessageSticker();
             
@@ -95,10 +71,10 @@ public class TelegramStickerService {
             inputMessageSticker.height = 0; // Будет установлено автоматически
 
             // Создаем reply-to если указано
-            TdApi.InputMessageReplyTo replyTo = null;
+            TdApi.InputMessageReplyToMessage replyTo = null;
             if (request.getReplyToMessageId() > 0) {
                 replyTo = new TdApi.InputMessageReplyToMessage();
-                ((TdApi.InputMessageReplyToMessage) replyTo).messageId = request.getReplyToMessageId();
+                replyTo.messageId = request.getReplyToMessageId();
             }
 
             // Создаем опции отправки
@@ -114,7 +90,7 @@ public class TelegramStickerService {
                 inputMessageSticker
             );
 
-            authService.getClient().send(sendMessage, result -> {
+            sendTelegramRequest(sendMessage, sink, (result, s) -> {
                 if (result instanceof TdApi.Message message) {
                     MessageResponseDto response = MessageResponseDto.success(
                         message.id,
@@ -122,17 +98,12 @@ public class TelegramStickerService {
                         "Sticker",
                         message.date
                     );
-                    sink.success(response);
-                } else if (result instanceof TdApi.Error error) {
-                    sink.error(new RuntimeException("Error sending sticker: " + error.message));
+                    s.success(response);
                 } else {
-                    sink.error(new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName()));
+                    throw new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName());
                 }
             });
-        })
-        .doOnSubscribe(subscription -> log.info("Sending sticker to chat: {}", request.getChatId()))
-        .doOnSuccess(result -> log.info("Successfully sent sticker with message ID: {}", result.getMessageId()))
-        .doOnError(error -> log.error("Error sending sticker to chat: {}", request.getChatId(), error));
+        });
     }
 
     private List<StickerSetResponseDto> convertStickerSetsToDto(TdApi.StickerSets stickerSets) {

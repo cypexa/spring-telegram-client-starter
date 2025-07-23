@@ -7,11 +7,15 @@ import com.cypexa.telegram.client.service.TelegramAuthService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Mono;
 
 @RestController
-@RequestMapping("/api/telegram/auth")
+@RequestMapping("/api/v1/telegram/auth")
 @RequiredArgsConstructor
 @Slf4j
 public class TelegramAuthController {
@@ -26,12 +30,6 @@ public class TelegramAuthController {
                 .map(message -> {
                     String currentState = authService.getCurrentAuthState();
                     return ResponseEntity.ok(AuthResponseDto.success(currentState, message));
-                })
-                .onErrorResume(ex -> {
-                    log.error("Error sending phone number", ex);
-                    return Mono.just(ResponseEntity.badRequest().body(
-                            AuthResponseDto.error(ex.getMessage())
-                    ));
                 });
     }
     
@@ -43,12 +41,6 @@ public class TelegramAuthController {
                 .map(message -> {
                     String currentState = authService.getCurrentAuthState();
                     return ResponseEntity.ok(AuthResponseDto.success(currentState, message));
-                })
-                .onErrorResume(ex -> {
-                    log.error("Error verifying auth code", ex);
-                    return Mono.just(ResponseEntity.badRequest().body(
-                            AuthResponseDto.error(ex.getMessage())
-                    ));
                 });
     }
     

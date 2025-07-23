@@ -1,20 +1,15 @@
 package com.cypexa.telegram.client.service;
 
 import com.cypexa.telegram.client.handlers.auth.request.AuthorizationRequestHandler;
-import com.cypexa.telegram.client.handlers.message.LogMessageHandler;
 import com.cypexa.telegram.client.properties.TelegramClientProperties;
-import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoSink;
 
-import java.io.IOError;
-import java.io.IOException;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -23,48 +18,25 @@ import java.util.concurrent.locks.ReentrantLock;
 @Slf4j
 public class TelegramAuthService {
 
+    private final Client telegramClient;
     private final TelegramClientProperties properties;
-    private final ApplicationContext applicationContext;
+
     private final Lock authorizationLock = new ReentrantLock();
     private final Condition gotAuthorization = authorizationLock.newCondition();
-    @Getter
-    private Client client;
+
     private volatile TdApi.AuthorizationState authorizationState;
     private volatile boolean haveAuthorization = false;
 
     @Autowired
-    public TelegramAuthService(TelegramClientProperties properties, ApplicationContext applicationContext) {
+    public TelegramAuthService(Client telegramClient, TelegramClientProperties properties) {
+        this.telegramClient = telegramClient;
         this.properties = properties;
-        this.applicationContext = applicationContext;
-        initializeClient();
     }
 
-    private void initializeClient() {
-        Client.setLogMessageHandler(properties.getLogVerbosityLevel(), new LogMessageHandler());
-        try {
-            Client.execute(new TdApi.SetLogVerbosityLevel(0));
-            Client.execute(new TdApi.SetLogStream(new TdApi.LogStreamFile("tdlib.log", 1 << 27, false)));
-        } catch (Client.ExecutionException error) {
-            throw new IOError(new IOException("Write access to the current directory is required"));
-        }
-        client = Client.create(this::onUpdate, null, null);
-    }
-
-    private void onUpdate(TdApi.Object update) {
-        if (update instanceof TdApi.UpdateAuthorizationState) {
-            onAuthorizationStateUpdated(((TdApi.UpdateAuthorizationState) update).authorizationState);
-        } else {
-            // Передаем другие updates в TelegramChatService
-            try {
-                TelegramChatService chatService = applicationContext.getBean(TelegramChatService.class);
-                chatService.handleUpdate(update);
-            } catch (Exception e) {
-                log.debug("Error handling update in chat service: {}", e.getMessage());
-            }
-        }
-    }
-
-    private void onAuthorizationStateUpdated(TdApi.AuthorizationState authorizationState) {
+    /**
+     * Обрабатывает обновления состояния авторизации (вызывается из TelegramUpdateHandler)
+     */
+    public void handleAuthorizationUpdate(TdApi.AuthorizationState authorizationState) {
         if (authorizationState != null) {
             this.authorizationState = authorizationState;
         }
@@ -111,51 +83,47 @@ public class TelegramAuthService {
         request.useTestDc = properties.getUseTestDc();
         request.filesDirectory = properties.getFilesDirectory();
 
-        client.send(request, new AuthorizationRequestHandler());
+        telegramClient.send(request, new AuthorizationRequestHandler());
     }
 
     public Mono<String> sendPhoneNumber(String phoneNumber) {
         return Mono.<String>create(sink -> {
-            if (authorizationState == null) {
-                sink.error(new RuntimeException("Client not initialized"));
-                return;
-            }
+                    if (authorizationState == null) {
+                        sink.error(new RuntimeException("Client not initialized"));
+                        return;
+                    }
 
-            if (!(authorizationState instanceof TdApi.AuthorizationStateWaitPhoneNumber)) {
-                sink.error(new RuntimeException("Current state is not waiting for phone number. Current state: " + 
-                    authorizationState.getClass().getSimpleName()));
-                return;
-            }
+                    if (!(authorizationState instanceof TdApi.AuthorizationStateWaitPhoneNumber)) {
+                        sink.error(new RuntimeException("Current state is not waiting for phone number. Current state: " +
+                                authorizationState.getClass().getSimpleName()));
+                        return;
+                    }
 
-            client.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), object -> {
-                handleResult(sink, object, "Phone number sent successfully", "Error sending phone number: ");
-            });
-        })
-        .doOnSubscribe(subscription -> log.info("Sending phone number: {}", phoneNumber))
-        .doOnSuccess(result -> log.info("Phone number sent successfully"))
-        .doOnError(error -> log.error("Error sending phone number", error));
+                    telegramClient.send(new TdApi.SetAuthenticationPhoneNumber(phoneNumber, null), object -> handleResult(sink, object, "Phone number sent successfully", "Error sending phone number: "));
+                })
+                .doOnSubscribe(subscription -> log.info("Sending phone number: {}", phoneNumber))
+                .doOnSuccess(result -> log.info("Phone number sent successfully"))
+                .doOnError(error -> log.error("Error sending phone number", error));
     }
 
     public Mono<String> sendAuthCode(String code) {
         return Mono.<String>create(sink -> {
-            if (authorizationState == null) {
-                sink.error(new RuntimeException("Client not initialized"));
-                return;
-            }
+                    if (authorizationState == null) {
+                        sink.error(new RuntimeException("Client not initialized"));
+                        return;
+                    }
 
-            if (!(authorizationState instanceof TdApi.AuthorizationStateWaitCode)) {
-                sink.error(new RuntimeException("Current state is not waiting for code. Current state: " + 
-                    authorizationState.getClass().getSimpleName()));
-                return;
-            }
+                    if (!(authorizationState instanceof TdApi.AuthorizationStateWaitCode)) {
+                        sink.error(new RuntimeException("Current state is not waiting for code. Current state: " +
+                                authorizationState.getClass().getSimpleName()));
+                        return;
+                    }
 
-            client.send(new TdApi.CheckAuthenticationCode(code), object -> {
-                handleResult(sink, object, "Authentication code verified successfully", "Error verifying code: ");
-            });
-        })
-        .doOnSubscribe(subscription -> log.info("Verifying authentication code"))
-        .doOnSuccess(result -> log.info("Authentication code verified successfully"))
-        .doOnError(error -> log.error("Error verifying auth code", error));
+                    telegramClient.send(new TdApi.CheckAuthenticationCode(code), object -> handleResult(sink, object, "Authentication code verified successfully", "Error verifying code: "));
+                })
+                .doOnSubscribe(subscription -> log.info("Verifying authentication code"))
+                .doOnSuccess(result -> log.info("Authentication code verified successfully"))
+                .doOnError(error -> log.error("Error verifying auth code", error));
     }
 
     private void handleResult(MonoSink<String> sink, TdApi.Object object, String successMessage, String errorPrefix) {
@@ -178,5 +146,4 @@ public class TelegramAuthService {
     public boolean isAuthorized() {
         return haveAuthorization;
     }
-
 }

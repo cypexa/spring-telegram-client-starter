@@ -2,10 +2,8 @@ package com.cypexa.telegram.client.properties;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 @Data
-@Component
 @ConfigurationProperties(prefix = "spring.telegram.client")
 public class TelegramClientProperties {
     

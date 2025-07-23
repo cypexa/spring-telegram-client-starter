@@ -1,6 +1,9 @@
 package com.cypexa.telegram.client.service;
 
-import com.cypexa.telegram.client.dto.*;
+import com.cypexa.telegram.client.dto.ChatListResponseDto;
+import com.cypexa.telegram.client.dto.ChatResponseDto;
+import com.cypexa.telegram.client.dto.MessageResponseDto;
+import com.cypexa.telegram.client.dto.SendMessageRequestDto;
 import lombok.extern.slf4j.Slf4j;
 import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
@@ -17,66 +20,37 @@ import java.util.concurrent.ConcurrentMap;
 
 @Service
 @Slf4j
-public class TelegramChatService {
+public class TelegramChatService extends BaseTelegramService {
 
-    private final TelegramAuthService authService;
-    
-    // Локальное хранилище чатов как в примере
+    // Локальное хранилище чатов
     private final ConcurrentMap<Long, TdApi.Chat> chats = new ConcurrentHashMap<>();
     private final NavigableSet<OrderedChat> mainChatList = new TreeSet<>();
     private volatile boolean haveFullMainChatList = false;
     
     @Autowired
-    public TelegramChatService(TelegramAuthService authService) {
-        this.authService = authService;
+    public TelegramChatService(Client telegramClient, TelegramAuthService authService) {
+        super(telegramClient, authService);
     }
 
     public Mono<ChatListResponseDto> getChats(int limit) {
-        return Mono.<ChatListResponseDto>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
-            try {
-                getMainChatList(limit, sink);
-            } catch (Exception e) {
-                sink.error(e);
-            }
-        })
-        .doOnSubscribe(subscription -> log.info("Loading chats with limit: {}", limit))
-        .doOnSuccess(result -> log.info("Successfully loaded {} chats", result.getTotalCount()))
-        .doOnError(error -> log.error("Error loading chats", error));
+        return executeWithAuth("getChats", sink -> getMainChatList(limit, sink));
     }
 
     private void getMainChatList(int limit, reactor.core.publisher.MonoSink<ChatListResponseDto> sink) {
         synchronized (mainChatList) {
             if (!haveFullMainChatList && limit > mainChatList.size()) {
                 // Отправляем LoadChats запрос если есть неизвестные чаты
-                authService.getClient().send(new TdApi.LoadChats(new TdApi.ChatListMain(), limit - mainChatList.size()), new Client.ResultHandler() {
-                    @Override
-                    public void onResult(TdApi.Object object) {
-                        switch (object.getConstructor()) {
-                            case TdApi.Error.CONSTRUCTOR:
-                                if (((TdApi.Error) object).code == 404) {
-                                    synchronized (mainChatList) {
-                                        haveFullMainChatList = true;
-                                    }
-                                    // Повторяем запрос после установки флага
-                                    getMainChatList(limit, sink);
-                                } else {
-                                    sink.error(new RuntimeException("LoadChats error: " + ((TdApi.Error) object).message));
-                                }
-                                break;
-                            case TdApi.Ok.CONSTRUCTOR:
-                                // Чаты уже получены через updates, повторяем запрос
+                sendTelegramRequest(
+                        new TdApi.LoadChats(new TdApi.ChatListMain(), limit - mainChatList.size()),
+                        sink,
+                        (result, s) -> {
+                            if (result.getConstructor() == TdApi.Ok.CONSTRUCTOR) {// Чаты уже получены через updates, повторяем запрос
                                 getMainChatList(limit, sink);
-                                break;
-                            default:
-                                sink.error(new RuntimeException("Wrong response from TDLib: " + object));
+                            } else {
+                                throw new RuntimeException("Wrong response from TDLib: " + result);
                         }
                     }
-                });
+                );
                 return;
             }
 
@@ -100,12 +74,7 @@ public class TelegramChatService {
     }
 
     public Mono<ChatResponseDto> getChatById(long chatId) {
-        return Mono.<ChatResponseDto>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
+        return executeWithAuth("getChatById", sink -> {
             // Сначала проверяем локальное хранилище
             TdApi.Chat localChat = chats.get(chatId);
             if (localChat != null) {
@@ -116,32 +85,25 @@ public class TelegramChatService {
             }
 
             // Если нет в локальном хранилище, запрашиваем
-            TdApi.GetChat getChat = new TdApi.GetChat(chatId);
-            authService.getClient().send(getChat, result -> {
-                if (result instanceof TdApi.Chat chat) {
-                    // Сохраняем в локальное хранилище
-                    chats.put(chat.id, chat);
-                    ChatResponseDto response = convertToDto(chat);
-                    sink.success(response);
-                } else if (result instanceof TdApi.Error error) {
-                    sink.error(new RuntimeException("Error getting chat: " + error.message));
-                } else {
-                    sink.error(new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName()));
-                }
-            });
-        })
-        .doOnSubscribe(subscription -> log.info("Getting chat by ID: {}", chatId))
-        .doOnSuccess(result -> log.info("Successfully got chat: {}", result.getTitle()))
-        .doOnError(error -> log.error("Error getting chat by ID: {}", chatId, error));
+            sendTelegramRequest(
+                    new TdApi.GetChat(chatId),
+                    sink,
+                    (result, s) -> {
+                        if (result instanceof TdApi.Chat chat) {
+                            // Сохраняем в локальное хранилище
+                            chats.put(chat.id, chat);
+                            s.success(convertToDto(chat));
+                        } else {
+                            throw new RuntimeException("Unexpected response type: " + result.getClass()
+                                    .getSimpleName());
+                        }
+                    }
+            );
+        });
     }
 
     public Mono<MessageResponseDto> sendMessage(SendMessageRequestDto request) {
-        return Mono.<MessageResponseDto>create(sink -> {
-            if (!authService.isAuthorized()) {
-                sink.error(new RuntimeException("Not authorized"));
-                return;
-            }
-
+        return executeWithAuth("sendMessage", sink -> {
             // Создаем текстовое сообщение
             TdApi.InputMessageText inputMessageText = new TdApi.InputMessageText();
             inputMessageText.text = new TdApi.FormattedText();
@@ -149,10 +111,10 @@ public class TelegramChatService {
             inputMessageText.text.entities = new TdApi.TextEntity[0];
 
             // Создаем reply-to если указано
-            TdApi.InputMessageReplyTo replyTo = null;
+            TdApi.InputMessageReplyToMessage replyTo = null;
             if (request.getReplyToMessageId() > 0) {
                 replyTo = new TdApi.InputMessageReplyToMessage();
-                ((TdApi.InputMessageReplyToMessage) replyTo).messageId = request.getReplyToMessageId();
+                replyTo.messageId = request.getReplyToMessageId();
             }
 
             // Создаем опции отправки
@@ -168,7 +130,7 @@ public class TelegramChatService {
                 inputMessageText
             );
 
-            authService.getClient().send(sendMessage, result -> {
+            sendTelegramRequest(sendMessage, sink, (result, s) -> {
                 if (result instanceof TdApi.Message message) {
                     MessageResponseDto response = MessageResponseDto.success(
                         message.id,
@@ -176,20 +138,15 @@ public class TelegramChatService {
                         extractMessageText(message),
                         message.date
                     );
-                    sink.success(response);
-                } else if (result instanceof TdApi.Error error) {
-                    sink.error(new RuntimeException("Error sending message: " + error.message));
+                    s.success(response);
                 } else {
-                    sink.error(new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName()));
+                    throw new RuntimeException("Unexpected response type: " + result.getClass().getSimpleName());
                 }
             });
-        })
-        .doOnSubscribe(subscription -> log.info("Sending message to chat: {}", request.getChatId()))
-        .doOnSuccess(result -> log.info("Successfully sent message with ID: {}", result.getMessageId()))
-        .doOnError(error -> log.error("Error sending message to chat: {}", request.getChatId(), error));
+        });
     }
 
-    // Метод для обработки updates (нужно вызывать из TelegramAuthService)
+    // Метод для обработки updates (вызывается из TelegramUpdateHandler)
     public void handleUpdate(TdApi.Object update) {
         switch (update.getConstructor()) {
             case TdApi.UpdateNewChat.CONSTRUCTOR: {
@@ -298,8 +255,7 @@ public class TelegramChatService {
             return "private";
         } else if (type instanceof TdApi.ChatTypeBasicGroup) {
             return "group";
-        } else if (type instanceof TdApi.ChatTypeSupergroup) {
-            TdApi.ChatTypeSupergroup supergroup = (TdApi.ChatTypeSupergroup) type;
+        } else if (type instanceof TdApi.ChatTypeSupergroup supergroup) {
             return supergroup.isChannel ? "channel" : "supergroup";
         } else if (type instanceof TdApi.ChatTypeSecret) {
             return "secret";
@@ -314,7 +270,7 @@ public class TelegramChatService {
         return ""; // Для других типов сообщений
     }
 
-    // Вспомогательный класс для сортировки чатов как в примере
+    // Вспомогательный класс для сортировки чатов
     private static class OrderedChat implements Comparable<OrderedChat> {
         final long chatId;
         final TdApi.ChatPosition position;
@@ -337,8 +293,7 @@ public class TelegramChatService {
 
         @Override
         public boolean equals(Object obj) {
-            if (!(obj instanceof OrderedChat)) return false;
-            OrderedChat o = (OrderedChat) obj;
+            if (!(obj instanceof OrderedChat o)) return false;
             return this.chatId == o.chatId && this.position.order == o.position.order;
         }
 
