@@ -5,6 +5,7 @@ import com.cypexa.telegram.client.service.TelegramAuthService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
+import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.ComponentScan;
 import org.springframework.context.annotation.Configuration;
@@ -27,10 +28,10 @@ public class TelegramClientAutoConfiguration {
     
     @Bean
     public TelegramAuthService telegramAuthService(
-            com.cypexa.telegram.client.properties.TelegramClientProperties properties) {
+            com.cypexa.telegram.client.properties.TelegramClientProperties properties, ApplicationContext applicationContext) {
         log.info("Initializing TelegramAuthService with properties: apiId={}, databaseDirectory={}", 
                 properties.getApiId(), properties.getDatabaseDirectory());
-        return new TelegramAuthService(properties);
+        return new TelegramAuthService(properties, applicationContext);
     }
     
     @Bean

@@ -3,10 +3,12 @@ package com.cypexa.telegram.client.service;
 import com.cypexa.telegram.client.handlers.auth.request.AuthorizationRequestHandler;
 import com.cypexa.telegram.client.handlers.message.LogMessageHandler;
 import com.cypexa.telegram.client.properties.TelegramClientProperties;
+import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.drinkless.tdlib.Client;
 import org.drinkless.tdlib.TdApi;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoSink;
@@ -22,15 +24,18 @@ import java.util.concurrent.locks.ReentrantLock;
 public class TelegramAuthService {
 
     private final TelegramClientProperties properties;
+    private final ApplicationContext applicationContext;
     private final Lock authorizationLock = new ReentrantLock();
     private final Condition gotAuthorization = authorizationLock.newCondition();
+    @Getter
     private Client client;
     private volatile TdApi.AuthorizationState authorizationState;
     private volatile boolean haveAuthorization = false;
 
     @Autowired
-    public TelegramAuthService(TelegramClientProperties properties) {
+    public TelegramAuthService(TelegramClientProperties properties, ApplicationContext applicationContext) {
         this.properties = properties;
+        this.applicationContext = applicationContext;
         initializeClient();
     }
 
@@ -48,6 +53,14 @@ public class TelegramAuthService {
     private void onUpdate(TdApi.Object update) {
         if (update instanceof TdApi.UpdateAuthorizationState) {
             onAuthorizationStateUpdated(((TdApi.UpdateAuthorizationState) update).authorizationState);
+        } else {
+            // Передаем другие updates в TelegramChatService
+            try {
+                TelegramChatService chatService = applicationContext.getBean(TelegramChatService.class);
+                chatService.handleUpdate(update);
+            } catch (Exception e) {
+                log.debug("Error handling update in chat service: {}", e.getMessage());
+            }
         }
     }
 
@@ -165,4 +178,5 @@ public class TelegramAuthService {
     public boolean isAuthorized() {
         return haveAuthorization;
     }
-} 
+
+}
